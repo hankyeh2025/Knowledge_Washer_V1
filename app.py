@@ -150,20 +150,23 @@ def get_system_instruction(mode: str, depth: str = None) -> str:
     - mode="translate": 翻譯模式
     - mode="explain": 解釋模式 (需指定 depth)
     """
+    # 圖片處理基礎指令
+    base_instruction = "若輸入包含圖片,請先用一段括號文字 `[圖片描述：...]` 客觀描述圖片內容,再回答問題。\n\n"
+
     if mode == "translate":
-        return "你是一個學術翻譯。將輸入內容翻譯成流暢的繁體中文，精確保留術語，不要做額外解釋。"
+        return base_instruction + "你是一個學術翻譯。將輸入內容翻譯成流暢的繁體中文，精確保留術語，不要做額外解釋。"
 
     elif mode == "explain":
         if depth == "摘要":
-            return "用一句話解釋這個概念的定義。"
+            return base_instruction + "用一句話解釋這個概念的定義。"
         elif depth == "詳解":
-            return "詳細解釋這段內容。如果是概念，說明其原理；如果是論述，分析其邏輯。"
+            return base_instruction + "詳細解釋這段內容。如果是概念，說明其原理；如果是論述，分析其邏輯。"
         elif depth == "延伸":
-            return "解釋這段內容，並延伸介紹相關聯的學術概念。"
+            return base_instruction + "解釋這段內容，並延伸介紹相關聯的學術概念。"
         else:
-            return "詳細解釋這段內容。"
+            return base_instruction + "詳細解釋這段內容。"
 
-    return ""
+    return base_instruction
 
 
 # ============================================================
@@ -171,8 +174,8 @@ def get_system_instruction(mode: str, depth: str = None) -> str:
 # ============================================================
 if "input_ai" not in st.session_state:
     st.session_state.input_ai = ""
-if "input_note" not in st.session_state:
-    st.session_state.input_note = ""
+if "input_user" not in st.session_state:
+    st.session_state.input_user = ""
 
 
 # ============================================================
@@ -188,10 +191,10 @@ st.caption("Knowledge Gold Panning - Phase 3")
 sheets_connected = check_sheets_connection()
 
 with st.expander("⚙️ 系統設定", expanded=False):
-    # 模型選擇
+    # 模型選擇 (僅保留 PRD 規定的選項)
     selected_model = st.selectbox(
         "選擇模型",
-        options=["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"],
+        options=["gemini-2.5-flash", "gemini-3-flash-preview"],
         index=0,
         help="選擇要使用的 Gemini 模型"
     )
@@ -207,7 +210,7 @@ with st.expander("⚙️ 系統設定", expanded=False):
 
 
 # ============================================================
-# 上方顯示區 (Log Zone)
+# 上方顯示區 (Log Zone) - 雙 Tab 分頁
 # ============================================================
 st.subheader("📜 學習紀錄")
 
@@ -218,22 +221,60 @@ with st.container(height=400):
             if logs_df.empty:
                 st.info("目前沒有歷史紀錄，開始你的學習之旅吧！")
             else:
-                # 渲染 Log
-                for _, row in logs_df.iterrows():
-                    role = row.get("role", "")
-                    tag = row.get("tag", "")
-                    content = row.get("content", "")
-                    timestamp = row.get("timestamp", "")
+                # Log Zone 雙 Tab
+                log_tab_ai, log_tab_user = st.tabs(["🤖 AI 歷程", "📝 思考足跡"])
 
-                    if role == "ai":
-                        with st.chat_message("assistant"):
-                            st.markdown(content)
-                            st.caption(f"🏷️ {tag} | 🕐 {timestamp}")
+                # AI 相關 Tags
+                ai_tags = ["vocab", "explain_brief", "explain_std", "explain_deep"]
+
+                # User 筆記 Tags
+                user_note_tags = ["question", "understand", "insight"]
+
+                with log_tab_ai:
+                    # 過濾: role == "ai" OR tag in vocab/explain 系列
+                    ai_logs = logs_df[
+                        (logs_df["role"] == "ai") |
+                        (logs_df["tag"].isin(ai_tags))
+                    ]
+
+                    if ai_logs.empty:
+                        st.info("還沒有 AI 對話紀錄")
                     else:
-                        # User message
-                        st.markdown(f"**[{tag}]** {content}")
-                        st.caption(f"🕐 {timestamp}")
-                        st.divider()
+                        for _, row in ai_logs.iterrows():
+                            role = row.get("role", "")
+                            tag = row.get("tag", "")
+                            content = row.get("content", "")
+                            timestamp = row.get("timestamp", "")
+
+                            if role == "ai":
+                                # AI 回應使用 blockquote
+                                st.markdown(f"> **🤖 [{tag}]**  \n> {content}")
+                                st.caption(f"🕐 {timestamp}")
+                            else:
+                                # User 提問
+                                st.markdown(f"**[{tag}]** {content}")
+                                st.caption(f"🕐 {timestamp}")
+                            st.divider()
+
+                with log_tab_user:
+                    # 過濾: role == "user" AND tag in question/understand/insight
+                    user_logs = logs_df[
+                        (logs_df["role"] == "user") &
+                        (logs_df["tag"].isin(user_note_tags))
+                    ]
+
+                    if user_logs.empty:
+                        st.info("還沒有思考筆記")
+                    else:
+                        for _, row in user_logs.iterrows():
+                            tag = row.get("tag", "")
+                            content = row.get("content", "")
+                            timestamp = row.get("timestamp", "")
+
+                            # 使用 bullet points
+                            st.markdown(f"- **[{tag}]** {content}")
+                            st.caption(f"🕐 {timestamp}")
+
         except Exception as e:
             st.error(f"讀取歷史紀錄失敗: {str(e)}")
     else:
@@ -260,6 +301,18 @@ with tab_ai:
         placeholder="貼上要翻譯或解釋的文字..."
     )
 
+    # 圖片上傳
+    uploaded_image = st.file_uploader(
+        "上傳圖片 (可選)",
+        type=["png", "jpg", "jpeg", "webp"],
+        help="單次對話用,刷新後需重新上傳",
+        key="img_upload"
+    )
+
+    # 顯示上傳的圖片預覽
+    if uploaded_image is not None:
+        st.image(uploaded_image, caption="已上傳的圖片", width=300)
+
     # 深度選擇
     depth_mode = st.pills(
         "解釋深度",
@@ -279,8 +332,8 @@ with tab_ai:
 
     # 翻譯邏輯
     if btn_translate:
-        if not ai_input.strip():
-            st.warning("請輸入要翻譯的內容")
+        if not ai_input.strip() and uploaded_image is None:
+            st.warning("請輸入要翻譯的內容或上傳圖片")
         elif not sheets_connected:
             st.error("請先設定 Google Sheets 連線")
         else:
@@ -295,8 +348,25 @@ with tab_ai:
 
             with st.spinner("翻譯中..."):
                 try:
+                    # 準備 Log 內容
+                    log_content = ai_input.strip() if ai_input.strip() else "(圖片輸入)"
+
                     # 寫入 User Log
-                    add_log("user", "vocab", ai_input.strip())
+                    add_log("user", "vocab", log_content)
+
+                    # 準備 API 內容
+                    contents = []
+
+                    # 處理圖片（如果有）
+                    if uploaded_image is not None:
+                        image = Image.open(uploaded_image)
+                        contents.append(image)
+
+                    # 加入文字
+                    if ai_input.strip():
+                        contents.append(ai_input.strip())
+                    elif uploaded_image is not None:
+                        contents.append("請翻譯圖片中的文字內容。")
 
                     # 呼叫 API
                     client = genai.Client(api_key=api_key)
@@ -304,7 +374,7 @@ with tab_ai:
 
                     response = client.models.generate_content(
                         model=selected_model,
-                        contents=ai_input.strip(),
+                        contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt
                         )
@@ -321,8 +391,8 @@ with tab_ai:
 
     # 解釋邏輯
     if btn_explain:
-        if not ai_input.strip():
-            st.warning("請輸入要解釋的內容")
+        if not ai_input.strip() and uploaded_image is None:
+            st.warning("請輸入要解釋的內容或上傳圖片")
         elif not sheets_connected:
             st.error("請先設定 Google Sheets 連線")
         else:
@@ -335,18 +405,35 @@ with tab_ai:
                 st.error("找不到 API Key 設定")
                 st.stop()
 
-            # 根據深度決定 Tag
+            # 根據深度決定 Tag (修正: explain_ext -> explain_deep)
             depth_tag_map = {
                 "摘要": "explain_brief",
                 "詳解": "explain_std",
-                "延伸": "explain_ext"
+                "延伸": "explain_deep"
             }
             tag = depth_tag_map.get(depth_mode, "explain_std")
 
             with st.spinner("解釋中..."):
                 try:
+                    # 準備 Log 內容
+                    log_content = ai_input.strip() if ai_input.strip() else "(圖片輸入)"
+
                     # 寫入 User Log
-                    add_log("user", tag, ai_input.strip())
+                    add_log("user", tag, log_content)
+
+                    # 準備 API 內容
+                    contents = []
+
+                    # 處理圖片（如果有）
+                    if uploaded_image is not None:
+                        image = Image.open(uploaded_image)
+                        contents.append(image)
+
+                    # 加入文字
+                    if ai_input.strip():
+                        contents.append(ai_input.strip())
+                    elif uploaded_image is not None:
+                        contents.append("請解釋圖片中的內容。")
 
                     # 呼叫 API
                     client = genai.Client(api_key=api_key)
@@ -354,7 +441,7 @@ with tab_ai:
 
                     response = client.models.generate_content(
                         model=selected_model,
-                        contents=ai_input.strip(),
+                        contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_prompt
                         )
@@ -382,10 +469,10 @@ with tab_note:
         key="note_tag"
     )
 
-    # 輸入區
+    # 輸入區 (修正: key 改為 input_user)
     note_input = st.text_area(
         "寫下你的筆記",
-        key="input_note",
+        key="input_user",
         height=120,
         placeholder="記錄你的問題、理解或洞察..."
     )
