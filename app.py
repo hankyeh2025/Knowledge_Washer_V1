@@ -10,7 +10,7 @@ import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
 from tenacity import retry, stop_after_attempt, wait_fixed
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import time
 
 
@@ -79,8 +79,9 @@ def add_log(role: str, tag: str, content: str):
     if len(content) > max_length:
         content = content[:max_length] + "...(truncated)"
 
-    # 準備寫入資料
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 準備寫入資料 (使用台灣時間 UTC+8)
+    tw_tz = timezone(timedelta(hours=8))
+    timestamp = datetime.now(tw_tz).strftime("%Y-%m-%d %H:%M:%S")
     row = [timestamp, role, tag, content]
 
     # 寫入至最後一行
@@ -88,8 +89,9 @@ def add_log(role: str, tag: str, content: str):
 
 
 # ============================================================
-# 讀取歷史紀錄
+# 讀取歷史紀錄 (Cached)
 # ============================================================
+@st.cache_data(ttl=5)
 def get_logs() -> pd.DataFrame:
     """
     讀取 Google Sheets 所有紀錄
