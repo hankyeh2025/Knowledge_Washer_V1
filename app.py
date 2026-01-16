@@ -6,7 +6,6 @@
 import streamlit as st
 from google import genai
 from PIL import Image
-import io
 
 
 # ============================================================
@@ -15,7 +14,8 @@ import io
 st.set_page_config(
     page_title="知識掏金盤",
     page_icon="⛏️",
-    layout="centered"
+    layout="centered",
+    initial_sidebar_state="collapsed"
 )
 
 
