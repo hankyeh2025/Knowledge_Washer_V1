@@ -11,6 +11,7 @@ import pandas as pd
 from google.oauth2.service_account import Credentials
 from tenacity import retry, stop_after_attempt, wait_fixed
 from datetime import datetime
+import time
 
 
 # ============================================================
@@ -90,18 +91,38 @@ def add_log(role: str, tag: str, content: str):
 # 讀取歷史紀錄
 # ============================================================
 def get_logs() -> pd.DataFrame:
-    """讀取 Google Sheets 所有紀錄"""
+    """
+    讀取 Google Sheets 所有紀錄
+    - 使用 get_all_values() 取代 get_all_records() 避免 Header 問題
+    - 依 timestamp 倒序排列（最新在最上面）
+    """
     worksheet = get_worksheet()
+    default_columns = ["timestamp", "role", "tag", "content"]
+
     if worksheet is None:
-        return pd.DataFrame(columns=["timestamp", "role", "tag", "content"])
+        return pd.DataFrame(columns=default_columns)
 
     try:
-        records = worksheet.get_all_records()
-        if not records:
-            return pd.DataFrame(columns=["timestamp", "role", "tag", "content"])
-        return pd.DataFrame(records)
+        # 使用 get_all_values() 取得原始資料
+        all_values = worksheet.get_all_values()
+
+        # 若資料少於 2 列（只有標題或全空），回傳空 DataFrame
+        if len(all_values) < 2:
+            return pd.DataFrame(columns=default_columns)
+
+        # 第一列為 Header，第二列之後為 Data
+        header = all_values[0]
+        data = all_values[1:]
+
+        df = pd.DataFrame(data, columns=header)
+
+        # 依 timestamp 倒序排列（最新的在最上面）
+        if "timestamp" in df.columns:
+            df = df.sort_values(by="timestamp", ascending=False).reset_index(drop=True)
+
+        return df
     except Exception:
-        return pd.DataFrame(columns=["timestamp", "role", "tag", "content"])
+        return pd.DataFrame(columns=default_columns)
 
 
 # ============================================================
@@ -122,6 +143,8 @@ def check_sheets_connection() -> bool:
 # ============================================================
 if "user_input" not in st.session_state:
     st.session_state.user_input = ""
+if "last_response" not in st.session_state:
+    st.session_state.last_response = None
 
 
 # ============================================================
@@ -202,6 +225,15 @@ submit_button = st.button("送出測試", type="primary", use_container_width=Tr
 
 
 # ============================================================
+# 顯示上次回應（若有）
+# ============================================================
+if st.session_state.last_response:
+    st.divider()
+    st.subheader("🤖 AI 回應")
+    st.markdown(st.session_state.last_response)
+
+
+# ============================================================
 # 後端邏輯
 # ============================================================
 if submit_button:
@@ -258,19 +290,29 @@ if submit_button:
                     contents=contents
                 )
 
-                # 寫入 AI 回應紀錄
+                # 儲存回應到 session_state
+                st.session_state.last_response = response.text
+
+                # 寫入 AI 回應紀錄並刷新頁面
                 if sheets_connected:
                     with st.spinner("寫入紀錄中..."):
                         try:
                             add_log('ai', 'test_a', response.text)
                             st.toast("✅ 對話已儲存！")
+                            # 短暫延遲讓 toast 顯示
+                            time.sleep(0.5)
+                            st.rerun()
                         except Exception as e:
                             st.warning(f"寫入 AI 紀錄失敗: {str(e)}")
-
-                # 顯示結果
-                st.divider()
-                st.subheader("🤖 AI 回應")
-                st.markdown(response.text)
+                            # 即使寫入失敗，仍顯示結果
+                            st.divider()
+                            st.subheader("🤖 AI 回應")
+                            st.markdown(response.text)
+                else:
+                    # 若未連線 Sheets，直接顯示結果
+                    st.divider()
+                    st.subheader("🤖 AI 回應")
+                    st.markdown(response.text)
 
             except Exception as e:
                 st.error(f"API 呼叫失敗: {str(e)}")
