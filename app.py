@@ -1,11 +1,16 @@
 """
-知識掏金盤 (Knowledge Gold Panning) - Phase 1
-核心引擎與設定介面
+知識掏金盤 (Knowledge Gold Panning) - Phase 2
+核心引擎 + Google Sheets 整合
 """
 
 import streamlit as st
 from google import genai
 from PIL import Image
+import gspread
+import pandas as pd
+from google.oauth2.service_account import Credentials
+from tenacity import retry, stop_after_attempt, wait_fixed
+from datetime import datetime
 
 
 # ============================================================
@@ -20,6 +25,99 @@ st.set_page_config(
 
 
 # ============================================================
+# Google Sheets 連線 (Cached)
+# ============================================================
+@st.cache_resource
+def get_google_sheet_client():
+    """建立並快取 Google Sheets 連線"""
+    try:
+        creds_dict = st.secrets["gcp_service_account"]
+        scopes = [
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/drive"
+        ]
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        return client
+    except (KeyError, FileNotFoundError):
+        return None
+
+
+def get_worksheet():
+    """取得工作表"""
+    client = get_google_sheet_client()
+    if client is None:
+        return None
+    try:
+        sheet_url = st.secrets["google_sheets"]["sheet_url"]
+        spreadsheet = client.open_by_url(sheet_url)
+        worksheet = spreadsheet.sheet1
+        return worksheet
+    except (KeyError, FileNotFoundError):
+        return None
+    except Exception:
+        return None
+
+
+# ============================================================
+# 強健寫入函式 (with Retry)
+# ============================================================
+@retry(stop=stop_after_attempt(3), wait=wait_fixed(2))
+def add_log(role: str, tag: str, content: str):
+    """
+    寫入對話紀錄至 Google Sheets
+    - 自動重試 3 次，每次間隔 2 秒
+    - 內容超過 50,000 字元自動截斷
+    """
+    worksheet = get_worksheet()
+    if worksheet is None:
+        raise Exception("無法連線至 Google Sheets")
+
+    # 防呆：截斷過長內容
+    max_length = 50000
+    if len(content) > max_length:
+        content = content[:max_length] + "...(truncated)"
+
+    # 準備寫入資料
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    row = [timestamp, role, tag, content]
+
+    # 寫入至最後一行
+    worksheet.append_row(row)
+
+
+# ============================================================
+# 讀取歷史紀錄
+# ============================================================
+def get_logs() -> pd.DataFrame:
+    """讀取 Google Sheets 所有紀錄"""
+    worksheet = get_worksheet()
+    if worksheet is None:
+        return pd.DataFrame(columns=["timestamp", "role", "tag", "content"])
+
+    try:
+        records = worksheet.get_all_records()
+        if not records:
+            return pd.DataFrame(columns=["timestamp", "role", "tag", "content"])
+        return pd.DataFrame(records)
+    except Exception:
+        return pd.DataFrame(columns=["timestamp", "role", "tag", "content"])
+
+
+# ============================================================
+# 檢查 Sheets 連線狀態
+# ============================================================
+def check_sheets_connection() -> bool:
+    """檢查 Google Sheets 是否已設定"""
+    try:
+        _ = st.secrets["gcp_service_account"]
+        _ = st.secrets["google_sheets"]["sheet_url"]
+        return True
+    except (KeyError, FileNotFoundError):
+        return False
+
+
+# ============================================================
 # Session State 初始化
 # ============================================================
 if "user_input" not in st.session_state:
@@ -30,7 +128,27 @@ if "user_input" not in st.session_state:
 # 標題
 # ============================================================
 st.title("⛏️ 知識掏金盤")
-st.caption("Knowledge Gold Panning - Phase 1")
+st.caption("Knowledge Gold Panning - Phase 2")
+
+
+# ============================================================
+# 歷史紀錄區 (Phase 2)
+# ============================================================
+sheets_connected = check_sheets_connection()
+
+if sheets_connected:
+    with st.expander("📜 歷史紀錄 (Phase 2 Test)", expanded=False):
+        try:
+            logs_df = get_logs()
+            if logs_df.empty:
+                st.info("目前沒有歷史紀錄")
+            else:
+                st.dataframe(logs_df, use_container_width=True)
+        except Exception as e:
+            st.error(f"讀取歷史紀錄失敗: {str(e)}")
+else:
+    with st.expander("📜 歷史紀錄 (Phase 2 Test)", expanded=False):
+        st.warning("Google Sheets 尚未設定。請在 .streamlit/secrets.toml 中設定 [gcp_service_account] 和 [google_sheets] sheet_url")
 
 
 # ============================================================
@@ -47,6 +165,12 @@ with st.expander("⚙️ 系統設定", expanded=False):
 
     # 顯示 SDK 版本
     st.text(f"Google Gen AI SDK 版本: {genai.__version__}")
+
+    # 顯示 Sheets 連線狀態
+    if sheets_connected:
+        st.text("📊 Google Sheets: ✅ 已連線")
+    else:
+        st.text("📊 Google Sheets: ❌ 未設定")
 
 
 # ============================================================
@@ -95,6 +219,17 @@ if submit_button:
             st.error("找不到 API Key 設定。請建立 .streamlit/secrets.toml 檔案並設定 [gemini] api_key")
             st.stop()
 
+        # 準備要記錄的使用者輸入
+        log_content = user_input.strip() if user_input.strip() else "(圖片輸入)"
+
+        # 寫入使用者紀錄
+        if sheets_connected:
+            with st.spinner("寫入紀錄中..."):
+                try:
+                    add_log('user', 'test_q', log_content)
+                except Exception as e:
+                    st.warning(f"寫入使用者紀錄失敗: {str(e)}")
+
         # 呼叫 API
         with st.spinner("正在處理中..."):
             try:
@@ -122,6 +257,15 @@ if submit_button:
                     model=selected_model,
                     contents=contents
                 )
+
+                # 寫入 AI 回應紀錄
+                if sheets_connected:
+                    with st.spinner("寫入紀錄中..."):
+                        try:
+                            add_log('ai', 'test_a', response.text)
+                            st.toast("✅ 對話已儲存！")
+                        except Exception as e:
+                            st.warning(f"寫入 AI 紀錄失敗: {str(e)}")
 
                 # 顯示結果
                 st.divider()
