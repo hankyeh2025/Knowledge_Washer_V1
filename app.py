@@ -213,6 +213,7 @@ with st.expander("⚙️ 系統設定", expanded=False):
 # 上方顯示區 (Log Zone) - 雙 Tab 分頁
 # ============================================================
 st.subheader("📜 學習紀錄")
+st.caption("💡 最新紀錄在最上方")
 
 with st.container(height=400):
     if sheets_connected:
@@ -247,8 +248,10 @@ with st.container(height=400):
                             timestamp = row.get("timestamp", "")
 
                             if role == "ai":
-                                # AI 回應使用 blockquote
-                                st.markdown(f"> **🤖 [{tag}]**  \n> {content}")
+                                # AI 回應使用 blockquote（處理多行內容的換行）
+                                content_lines = content.split('\n')
+                                formatted_content = '  \n> '.join(content_lines)
+                                st.markdown(f"> **🤖 [{tag}]**  \n> {formatted_content}")
                                 st.caption(f"🕐 {timestamp}")
                             else:
                                 # User 提問
@@ -382,6 +385,7 @@ with tab_ai:
 
                     # 寫入 AI Log
                     add_log("ai", "vocab", response.text)
+                    st.session_state.input_ai = ""  # 清空輸入框
                     st.toast("✅ 翻譯完成！")
                     time.sleep(0.5)
                     st.rerun()
@@ -449,6 +453,7 @@ with tab_ai:
 
                     # 寫入 AI Log
                     add_log("ai", tag, response.text)
+                    st.session_state.input_ai = ""  # 清空輸入框
                     st.toast("✅ 解釋完成！")
                     time.sleep(0.5)
                     st.rerun()
@@ -497,6 +502,7 @@ with tab_note:
             with st.spinner("儲存中..."):
                 try:
                     add_log("user", tag, note_input.strip())
+                    st.session_state.input_user = ""  # 清空輸入框
                     st.toast("✅ 筆記已儲存！")
                     time.sleep(0.5)
                     st.rerun()
