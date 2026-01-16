@@ -40,7 +40,7 @@ with st.expander("⚙️ 系統設定", expanded=False):
     # 模型選擇
     selected_model = st.selectbox(
         "選擇模型",
-        options=["gemini-2.5-flash", "gemini-2.0-flash-exp"],
+        options=["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash-preview", "gemini-3-pro-preview"],
         index=0,
         help="選擇要使用的 Gemini 模型"
     )
@@ -71,7 +71,7 @@ uploaded_file = st.file_uploader(
 
 # 顯示上傳的圖片預覽
 if uploaded_file is not None:
-    st.image(uploaded_file, caption="已上傳的圖片", use_container_width=True)
+    st.image(uploaded_file, caption="已上傳的圖片", width=300)
 
 # 送出按鈕
 submit_button = st.button("送出測試", type="primary", use_container_width=True)
@@ -115,7 +115,7 @@ if submit_button:
                     contents.append(user_input.strip())
                 else:
                     # 若只有圖片，給一個預設 prompt
-                    contents.append("請描述這張圖片的內容。")
+                    contents.append("請用繁體中文詳細描述這張圖片的內容。")
 
                 # 呼叫 API
                 response = client.models.generate_content(
