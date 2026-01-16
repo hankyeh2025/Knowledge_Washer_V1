@@ -1,10 +1,11 @@
 """
-知識掏金盤 (Knowledge Gold Panning) - Phase 2
-核心引擎 + Google Sheets 整合
+知識掏金盤 (Knowledge Gold Panning) - Phase 3
+雙區介面與大腦植入 (The UI & Brain)
 """
 
 import streamlit as st
 from google import genai
+from google.genai import types
 from PIL import Image
 import gspread
 import pandas as pd
@@ -141,44 +142,51 @@ def check_sheets_connection() -> bool:
 
 
 # ============================================================
+# System Instruction 輔助函式
+# ============================================================
+def get_system_instruction(mode: str, depth: str = None) -> str:
+    """
+    集中管理 System Prompts
+    - mode="translate": 翻譯模式
+    - mode="explain": 解釋模式 (需指定 depth)
+    """
+    if mode == "translate":
+        return "你是一個學術翻譯。將輸入內容翻譯成流暢的繁體中文，精確保留術語，不要做額外解釋。"
+
+    elif mode == "explain":
+        if depth == "摘要":
+            return "用一句話解釋這個概念的定義。"
+        elif depth == "詳解":
+            return "詳細解釋這段內容。如果是概念，說明其原理；如果是論述，分析其邏輯。"
+        elif depth == "延伸":
+            return "解釋這段內容，並延伸介紹相關聯的學術概念。"
+        else:
+            return "詳細解釋這段內容。"
+
+    return ""
+
+
+# ============================================================
 # Session State 初始化
 # ============================================================
-if "user_input" not in st.session_state:
-    st.session_state.user_input = ""
-if "last_response" not in st.session_state:
-    st.session_state.last_response = None
+if "input_ai" not in st.session_state:
+    st.session_state.input_ai = ""
+if "input_note" not in st.session_state:
+    st.session_state.input_note = ""
 
 
 # ============================================================
 # 標題
 # ============================================================
 st.title("⛏️ 知識掏金盤")
-st.caption("Knowledge Gold Panning - Phase 2")
-
-
-# ============================================================
-# 歷史紀錄區 (Phase 2)
-# ============================================================
-sheets_connected = check_sheets_connection()
-
-if sheets_connected:
-    with st.expander("📜 歷史紀錄 (Phase 2 Test)", expanded=False):
-        try:
-            logs_df = get_logs()
-            if logs_df.empty:
-                st.info("目前沒有歷史紀錄")
-            else:
-                st.dataframe(logs_df, use_container_width=True)
-        except Exception as e:
-            st.error(f"讀取歷史紀錄失敗: {str(e)}")
-else:
-    with st.expander("📜 歷史紀錄 (Phase 2 Test)", expanded=False):
-        st.warning("Google Sheets 尚未設定。請在 .streamlit/secrets.toml 中設定 [gcp_service_account] 和 [google_sheets] sheet_url")
+st.caption("Knowledge Gold Panning - Phase 3")
 
 
 # ============================================================
 # 系統設定區
 # ============================================================
+sheets_connected = check_sheets_connection()
+
 with st.expander("⚙️ 系統設定", expanded=False):
     # 模型選擇
     selected_model = st.selectbox(
@@ -199,122 +207,211 @@ with st.expander("⚙️ 系統設定", expanded=False):
 
 
 # ============================================================
-# 輸入區
+# 上方顯示區 (Log Zone)
+# ============================================================
+st.subheader("📜 學習紀錄")
+
+with st.container(height=400):
+    if sheets_connected:
+        try:
+            logs_df = get_logs()
+            if logs_df.empty:
+                st.info("目前沒有歷史紀錄，開始你的學習之旅吧！")
+            else:
+                # 渲染 Log
+                for _, row in logs_df.iterrows():
+                    role = row.get("role", "")
+                    tag = row.get("tag", "")
+                    content = row.get("content", "")
+                    timestamp = row.get("timestamp", "")
+
+                    if role == "ai":
+                        with st.chat_message("assistant"):
+                            st.markdown(content)
+                            st.caption(f"🏷️ {tag} | 🕐 {timestamp}")
+                    else:
+                        # User message
+                        st.markdown(f"**[{tag}]** {content}")
+                        st.caption(f"🕐 {timestamp}")
+                        st.divider()
+        except Exception as e:
+            st.error(f"讀取歷史紀錄失敗: {str(e)}")
+    else:
+        st.warning("Google Sheets 尚未設定。請在 .streamlit/secrets.toml 中設定 [gcp_service_account] 和 [google_sheets] sheet_url")
+
+
+# ============================================================
+# 下方操作區 (Input Zone)
 # ============================================================
 st.divider()
 
-# 文字輸入 - 綁定到 session_state
-user_input = st.text_area(
-    "輸入您的問題或指令",
-    key="user_input",
-    height=150,
-    placeholder="請在此輸入文字..."
-)
-
-# 圖片上傳
-uploaded_file = st.file_uploader(
-    "上傳圖片（選填）",
-    type=["png", "jpg", "jpeg", "webp"],
-    help="單次對話用，刷新後需重新上傳"
-)
-
-# 顯示上傳的圖片預覽
-if uploaded_file is not None:
-    st.image(uploaded_file, caption="已上傳的圖片", width=300)
-
-# 送出按鈕
-submit_button = st.button("送出測試", type="primary", use_container_width=True)
+tab_ai, tab_note = st.tabs(["🤖 AI 助手", "📝 我的筆記"])
 
 
 # ============================================================
-# 顯示上次回應（若有）
+# Tab 1: AI 助手
 # ============================================================
-if st.session_state.last_response:
-    st.divider()
-    st.subheader("🤖 AI 回應")
-    st.markdown(st.session_state.last_response)
+with tab_ai:
+    # 輸入區
+    ai_input = st.text_area(
+        "輸入要處理的內容",
+        key="input_ai",
+        height=120,
+        placeholder="貼上要翻譯或解釋的文字..."
+    )
 
+    # 深度選擇
+    depth_mode = st.pills(
+        "解釋深度",
+        options=["摘要", "詳解", "延伸"],
+        default="詳解",
+        key="depth_mode"
+    )
 
-# ============================================================
-# 後端邏輯
-# ============================================================
-if submit_button:
-    # 檢查是否有輸入
-    if not user_input.strip() and uploaded_file is None:
-        st.warning("請輸入文字或上傳圖片")
-    else:
-        # 檢查 API Key
-        try:
-            api_key = st.secrets["gemini"]["api_key"]
-            if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
-                st.error("請先設定 Gemini API Key（在 .streamlit/secrets.toml 中）")
-                st.stop()
-        except (KeyError, FileNotFoundError):
-            st.error("找不到 API Key 設定。請建立 .streamlit/secrets.toml 檔案並設定 [gemini] api_key")
-            st.stop()
+    # 按鈕區 (雙欄)
+    col1, col2 = st.columns(2)
 
-        # 準備要記錄的使用者輸入
-        log_content = user_input.strip() if user_input.strip() else "(圖片輸入)"
+    with col1:
+        btn_translate = st.button("🔤 翻譯", use_container_width=True)
 
-        # 寫入使用者紀錄
-        if sheets_connected:
-            with st.spinner("寫入紀錄中..."):
-                try:
-                    add_log('user', 'test_q', log_content)
-                except Exception as e:
-                    st.warning(f"寫入使用者紀錄失敗: {str(e)}")
+    with col2:
+        btn_explain = st.button("🧑‍🏫 解釋", use_container_width=True)
 
-        # 呼叫 API
-        with st.spinner("正在處理中..."):
+    # 翻譯邏輯
+    if btn_translate:
+        if not ai_input.strip():
+            st.warning("請輸入要翻譯的內容")
+        elif not sheets_connected:
+            st.error("請先設定 Google Sheets 連線")
+        else:
             try:
-                # 初始化 Client
-                client = genai.Client(api_key=api_key)
+                api_key = st.secrets["gemini"]["api_key"]
+                if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
+                    st.error("請先設定 Gemini API Key")
+                    st.stop()
+            except (KeyError, FileNotFoundError):
+                st.error("找不到 API Key 設定")
+                st.stop()
 
-                # 準備內容
-                contents = []
+            with st.spinner("翻譯中..."):
+                try:
+                    # 寫入 User Log
+                    add_log("user", "vocab", ai_input.strip())
 
-                # 處理圖片（如果有）
-                if uploaded_file is not None:
-                    # 使用 Pillow 開啟圖片
-                    image = Image.open(uploaded_file)
-                    contents.append(image)
+                    # 呼叫 API
+                    client = genai.Client(api_key=api_key)
+                    system_prompt = get_system_instruction("translate")
 
-                # 加入文字 Prompt
-                if user_input.strip():
-                    contents.append(user_input.strip())
-                else:
-                    # 若只有圖片，給一個預設 prompt
-                    contents.append("請用繁體中文詳細描述這張圖片的內容。")
+                    response = client.models.generate_content(
+                        model=selected_model,
+                        contents=ai_input.strip(),
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt
+                        )
+                    )
 
-                # 呼叫 API
-                response = client.models.generate_content(
-                    model=selected_model,
-                    contents=contents
-                )
+                    # 寫入 AI Log
+                    add_log("ai", "vocab", response.text)
+                    st.toast("✅ 翻譯完成！")
+                    time.sleep(0.5)
+                    st.rerun()
 
-                # 儲存回應到 session_state
-                st.session_state.last_response = response.text
+                except Exception as e:
+                    st.error(f"翻譯失敗: {str(e)}")
 
-                # 寫入 AI 回應紀錄並刷新頁面
-                if sheets_connected:
-                    with st.spinner("寫入紀錄中..."):
-                        try:
-                            add_log('ai', 'test_a', response.text)
-                            st.toast("✅ 對話已儲存！")
-                            # 短暫延遲讓 toast 顯示
-                            time.sleep(0.5)
-                            st.rerun()
-                        except Exception as e:
-                            st.warning(f"寫入 AI 紀錄失敗: {str(e)}")
-                            # 即使寫入失敗，仍顯示結果
-                            st.divider()
-                            st.subheader("🤖 AI 回應")
-                            st.markdown(response.text)
-                else:
-                    # 若未連線 Sheets，直接顯示結果
-                    st.divider()
-                    st.subheader("🤖 AI 回應")
-                    st.markdown(response.text)
+    # 解釋邏輯
+    if btn_explain:
+        if not ai_input.strip():
+            st.warning("請輸入要解釋的內容")
+        elif not sheets_connected:
+            st.error("請先設定 Google Sheets 連線")
+        else:
+            try:
+                api_key = st.secrets["gemini"]["api_key"]
+                if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
+                    st.error("請先設定 Gemini API Key")
+                    st.stop()
+            except (KeyError, FileNotFoundError):
+                st.error("找不到 API Key 設定")
+                st.stop()
 
-            except Exception as e:
-                st.error(f"API 呼叫失敗: {str(e)}")
+            # 根據深度決定 Tag
+            depth_tag_map = {
+                "摘要": "explain_brief",
+                "詳解": "explain_std",
+                "延伸": "explain_ext"
+            }
+            tag = depth_tag_map.get(depth_mode, "explain_std")
+
+            with st.spinner("解釋中..."):
+                try:
+                    # 寫入 User Log
+                    add_log("user", tag, ai_input.strip())
+
+                    # 呼叫 API
+                    client = genai.Client(api_key=api_key)
+                    system_prompt = get_system_instruction("explain", depth_mode)
+
+                    response = client.models.generate_content(
+                        model=selected_model,
+                        contents=ai_input.strip(),
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_prompt
+                        )
+                    )
+
+                    # 寫入 AI Log
+                    add_log("ai", tag, response.text)
+                    st.toast("✅ 解釋完成！")
+                    time.sleep(0.5)
+                    st.rerun()
+
+                except Exception as e:
+                    st.error(f"解釋失敗: {str(e)}")
+
+
+# ============================================================
+# Tab 2: 我的筆記
+# ============================================================
+with tab_note:
+    # 意圖選擇
+    note_tag = st.pills(
+        "筆記類型",
+        options=["問題", "理解", "洞察"],
+        default="理解",
+        key="note_tag"
+    )
+
+    # 輸入區
+    note_input = st.text_area(
+        "寫下你的筆記",
+        key="input_note",
+        height=120,
+        placeholder="記錄你的問題、理解或洞察..."
+    )
+
+    # 記錄按鈕
+    btn_save_note = st.button("💾 記錄", use_container_width=True)
+
+    if btn_save_note:
+        if not note_input.strip():
+            st.warning("請輸入筆記內容")
+        elif not sheets_connected:
+            st.error("請先設定 Google Sheets 連線")
+        else:
+            # 根據意圖決定 Tag
+            note_tag_map = {
+                "問題": "question",
+                "理解": "understand",
+                "洞察": "insight"
+            }
+            tag = note_tag_map.get(note_tag, "understand")
+
+            with st.spinner("儲存中..."):
+                try:
+                    add_log("user", tag, note_input.strip())
+                    st.toast("✅ 筆記已儲存！")
+                    time.sleep(0.5)
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"儲存失敗: {str(e)}")
