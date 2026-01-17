@@ -170,12 +170,37 @@ def get_system_instruction(mode: str, depth: str = None) -> str:
 
 
 # ============================================================
+# API Key 驗證
+# ============================================================
+def get_api_key() -> str:
+    """
+    取得並驗證 Gemini API Key
+    若未設定或無效，顯示錯誤訊息並停止執行
+    """
+    try:
+        api_key = st.secrets["gemini"]["api_key"]
+        if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
+            st.error("請先設定 Gemini API Key")
+            st.stop()
+        return api_key
+    except (KeyError, FileNotFoundError):
+        st.error("找不到 API Key 設定")
+        st.stop()
+
+
+# ============================================================
 # Session State 初始化
 # ============================================================
 if "input_ai" not in st.session_state:
     st.session_state.input_ai = ""
 if "input_user" not in st.session_state:
     st.session_state.input_user = ""
+
+# 清空輸入框的 flag
+if "clear_input_ai" not in st.session_state:
+    st.session_state.clear_input_ai = False
+if "clear_input_user" not in st.session_state:
+    st.session_state.clear_input_user = False
 
 
 # ============================================================
@@ -239,7 +264,7 @@ with st.container(height=400):
                     ]
 
                     if ai_logs.empty:
-                        st.info("還沒有 AI 對話紀錄")
+                        st.info("💡 還沒有 AI 對話紀錄，試試下方的「翻譯」或「解釋」功能吧！")
                     else:
                         for _, row in ai_logs.iterrows():
                             role = row.get("role", "")
@@ -267,7 +292,7 @@ with st.container(height=400):
                     ]
 
                     if user_logs.empty:
-                        st.info("還沒有思考筆記")
+                        st.info("💡 還沒有思考筆記，試試在「我的筆記」Tab 記錄你的想法吧！")
                     else:
                         for _, row in user_logs.iterrows():
                             tag = row.get("tag", "")
@@ -296,6 +321,11 @@ tab_ai, tab_note = st.tabs(["🤖 AI 助手", "📝 我的筆記"])
 # Tab 1: AI 助手
 # ============================================================
 with tab_ai:
+    # 檢查是否需要清空輸入框
+    if st.session_state.clear_input_ai:
+        st.session_state.input_ai = ""
+        st.session_state.clear_input_ai = False
+
     # 輸入區
     ai_input = st.text_area(
         "輸入要處理的內容",
@@ -340,14 +370,7 @@ with tab_ai:
         elif not sheets_connected:
             st.error("請先設定 Google Sheets 連線")
         else:
-            try:
-                api_key = st.secrets["gemini"]["api_key"]
-                if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
-                    st.error("請先設定 Gemini API Key")
-                    st.stop()
-            except (KeyError, FileNotFoundError):
-                st.error("找不到 API Key 設定")
-                st.stop()
+            api_key = get_api_key()
 
             with st.spinner("翻譯中..."):
                 try:
@@ -385,7 +408,7 @@ with tab_ai:
 
                     # 寫入 AI Log
                     add_log("ai", "vocab", response.text)
-                    st.session_state.input_ai = ""  # 清空輸入框
+                    st.session_state.clear_input_ai = True  # 設定清空 flag
                     st.toast("✅ 翻譯完成！")
                     time.sleep(0.5)
                     st.rerun()
@@ -400,16 +423,9 @@ with tab_ai:
         elif not sheets_connected:
             st.error("請先設定 Google Sheets 連線")
         else:
-            try:
-                api_key = st.secrets["gemini"]["api_key"]
-                if not api_key or api_key == "YOUR_GEMINI_API_KEY_HERE":
-                    st.error("請先設定 Gemini API Key")
-                    st.stop()
-            except (KeyError, FileNotFoundError):
-                st.error("找不到 API Key 設定")
-                st.stop()
+            api_key = get_api_key()
 
-            # 根據深度決定 Tag (修正: explain_ext -> explain_deep)
+            # 根據深度決定 Tag
             depth_tag_map = {
                 "摘要": "explain_brief",
                 "詳解": "explain_std",
@@ -453,7 +469,7 @@ with tab_ai:
 
                     # 寫入 AI Log
                     add_log("ai", tag, response.text)
-                    st.session_state.input_ai = ""  # 清空輸入框
+                    st.session_state.clear_input_ai = True  # 設定清空 flag
                     st.toast("✅ 解釋完成！")
                     time.sleep(0.5)
                     st.rerun()
@@ -466,6 +482,11 @@ with tab_ai:
 # Tab 2: 我的筆記
 # ============================================================
 with tab_note:
+    # 檢查是否需要清空輸入框
+    if st.session_state.clear_input_user:
+        st.session_state.input_user = ""
+        st.session_state.clear_input_user = False
+
     # 意圖選擇
     note_tag = st.pills(
         "筆記類型",
@@ -474,7 +495,7 @@ with tab_note:
         key="note_tag"
     )
 
-    # 輸入區 (修正: key 改為 input_user)
+    # 輸入區
     note_input = st.text_area(
         "寫下你的筆記",
         key="input_user",
@@ -502,7 +523,7 @@ with tab_note:
             with st.spinner("儲存中..."):
                 try:
                     add_log("user", tag, note_input.strip())
-                    st.session_state.input_user = ""  # 清空輸入框
+                    st.session_state.clear_input_user = True  # 設定清空 flag
                     st.toast("✅ 筆記已儲存！")
                     time.sleep(0.5)
                     st.rerun()
